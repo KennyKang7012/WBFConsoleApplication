@@ -150,6 +150,70 @@ e_Exit:
 	return hr;
 }
 
+HRESULT EnumerateSensors(WINBIO_UNIT_ID *pUnitId)
+{
+	// Declare variables.
+	HRESULT hr = S_OK;
+	PWINBIO_UNIT_SCHEMA unitSchema = NULL;
+	SIZE_T unitCount = 0;
+	SIZE_T index = 0;
+
+	// Enumerate the installed biometric units.
+	hr = WinBioEnumBiometricUnits(
+		WINBIO_TYPE_FINGERPRINT,        // Type of biometric unit
+		&unitSchema,                    // Array of unit schemas
+		&unitCount);                   // Count of unit schemas
+
+	if (FAILED(hr))
+	{
+		wprintf_s(L"\n WinBioEnumBiometricUnits failed. hr = 0x%x\n", hr);
+		goto e_Exit;
+	}
+
+	if (unitCount >= 1)
+		*pUnitId = unitSchema[0].UnitId;
+
+	// Display information for each installed biometric unit.
+	wprintf_s(L"\nSensors: \n");
+	for (index = 0; index < unitCount; ++index)
+	{
+		wprintf_s(L"\n[%lld]: \tUnit ID: %d\n",
+			index,
+			unitSchema[index].UnitId);
+		wprintf_s(L"\tDevice instance ID: %s\n",
+			unitSchema[index].DeviceInstanceId);
+		wprintf_s(L"\tPool type: %d\n",
+			unitSchema[index].PoolType);
+		wprintf_s(L"\tBiometric factor: %d\n",
+			unitSchema[index].BiometricFactor);
+		wprintf_s(L"\tSensor subtype: %d\n",
+			unitSchema[index].SensorSubType);
+		wprintf_s(L"\tSensor capabilities: 0x%08x\n",
+			unitSchema[index].Capabilities);
+		wprintf_s(L"\tDescription: %s\n",
+			unitSchema[index].Description);
+		wprintf_s(L"\tManufacturer: %s\n",
+			unitSchema[index].Manufacturer);
+		wprintf_s(L"\tModel: %s\n",
+			unitSchema[index].Model);
+		wprintf_s(L"\tSerial no: %s\n",
+			unitSchema[index].SerialNumber);
+		wprintf_s(L"\tFirmware version: [%d.%d]\n",
+			unitSchema[index].FirmwareVersion.MajorVersion,
+			unitSchema[index].FirmwareVersion.MinorVersion);
+	}
+
+e_Exit:
+	if (unitSchema != NULL)
+	{
+		WinBioFree(unitSchema);
+		unitSchema = NULL;
+	}
+	//wprintf_s(L"\nPress any key to exit...");
+	//_getch();
+	return hr;
+}
+
 HRESULT LocateSensor()
 {
 	HRESULT hr = S_OK;
@@ -265,6 +329,181 @@ e_Exit:
 	{
 		CloseHandle(tokenHandle);
 	}
+	return hr;
+}
+
+HRESULT DeleteTemplate(WINBIO_BIOMETRIC_SUBTYPE subFactor)
+{
+	HRESULT hr = S_OK;
+	WINBIO_IDENTITY identity = { 0 };
+	WINBIO_SESSION_HANDLE sessionHandle = NULL;
+	WINBIO_UNIT_ID unitId = 0;
+
+	// Find the identity of the user.
+	hr = GetCurrentUserIdentity(&identity);
+	if (FAILED(hr))
+	{
+		wprintf_s(L"\n User identity not found. hr = 0x%x\n", hr);
+		goto e_Exit;
+	}
+
+	// Connect to the system pool. 
+	//
+	hr = WinBioOpenSession(
+		WINBIO_TYPE_FINGERPRINT,    // Service provider
+		WINBIO_POOL_SYSTEM,         // Pool type
+		WINBIO_FLAG_DEFAULT,        // Configuration and access
+		NULL,                       // Array of biometric unit IDs
+		0,                          // Count of biometric unit IDs
+		NULL,                       // Database ID
+		&sessionHandle              // [out] Session handle
+	);
+	if (FAILED(hr))
+	{
+		wprintf_s(L"\n WinBioEnumBiometricUnits failed. hr = 0x%x\n", hr);
+		goto e_Exit;
+	}
+
+	// Locate the sensor.
+	//
+	wprintf_s(L"\n Swipe your finger on the sensor...\n");
+	hr = WinBioLocateSensor(sessionHandle, &unitId);
+	if (FAILED(hr))
+	{
+		wprintf_s(L"\n WinBioLocateSensor failed. hr = 0x%x\n", hr);
+		goto e_Exit;
+	}
+
+	// Delete the template identified by the subFactor argument.
+	//
+	hr = WinBioDeleteTemplate(
+		sessionHandle,
+		unitId,
+		&identity,
+		subFactor
+	);
+	if (FAILED(hr))
+	{
+		wprintf_s(L"\n WinBioDeleteTemplate failed. hr = 0x%x\n", hr);
+		goto e_Exit;
+	}
+
+e_Exit:
+	if (sessionHandle != NULL)
+	{
+		WinBioCloseSession(sessionHandle);
+		sessionHandle = NULL;
+	}
+
+	wprintf_s(L"Press any key to exit...");
+	_getch();
+	return hr;
+}
+
+HRESULT DeleteTemplate()
+{
+	HRESULT hr = S_OK;
+	WINBIO_IDENTITY identity = { 0 };
+	WINBIO_SESSION_HANDLE sessionHandle = NULL;
+	WINBIO_UNIT_ID unitId = 0;
+	PWINBIO_BIOMETRIC_SUBTYPE subFactorArray = NULL;
+	WINBIO_BIOMETRIC_SUBTYPE SubFactor = 0;
+	SIZE_T subFactorCount = 0;
+
+	// Find the identity of the user.
+	hr = GetCurrentUserIdentity(&identity);
+	if (FAILED(hr))
+	{
+		wprintf_s(L"\n User identity not found. hr = 0x%x\n", hr);
+		goto e_Exit;
+	}
+
+	// Connect to the system pool. 
+	//
+	hr = WinBioOpenSession(
+		WINBIO_TYPE_FINGERPRINT,    // Service provider
+		WINBIO_POOL_SYSTEM,         // Pool type
+		WINBIO_FLAG_DEFAULT,        // Configuration and access
+		NULL,                       // Array of biometric unit IDs
+		0,                          // Count of biometric unit IDs
+		NULL,                       // Database ID
+		&sessionHandle              // [out] Session handle
+	);
+	if (FAILED(hr))
+	{
+		wprintf_s(L"\n WinBioEnumBiometricUnits failed. hr = 0x%x\n", hr);
+		goto e_Exit;
+	}
+
+	//KennyKang 20210812 start
+	// Locate the sensor.
+	//
+	//wprintf_s(L"\n Swipe your finger on the sensor...\n");
+	//hr = WinBioLocateSensor(sessionHandle, &unitId);
+	//if (FAILED(hr))
+	//{
+	//	wprintf_s(L"\n WinBioLocateSensor failed. hr = 0x%x\n", hr);
+	//	goto e_Exit;
+	//}
+
+	EnumerateSensors(&unitId);
+	wprintf_s(L"\n Enrollments for this user on Unit ID %d:", unitId);
+
+	// Retrieve the biometric sub-factors for the template.
+	hr = WinBioEnumEnrollments(
+		sessionHandle,              // Session handle
+		unitId,                     // Biometric unit ID
+		&identity,                  // Template ID
+		&subFactorArray,            // Subfactors
+		&subFactorCount             // Count of subfactors
+	);
+	if (FAILED(hr))
+	{
+		wprintf_s(L"\n WinBioEnumEnrollments failed. hr = 0x%x\n", hr);
+		goto e_Exit;
+	}
+
+	// Print the sub-factor(s) to the console.
+	wprintf_s(L"\n Enrollments subFactorCount %lld:", subFactorCount);
+	for (SIZE_T index = 0; index < subFactorCount; ++index)
+	{
+		SubFactor = subFactorArray[index];
+
+		// Delete the template identified by the subFactor argument.
+		//
+		hr = WinBioDeleteTemplate(
+			sessionHandle,
+			unitId,
+			&identity,
+			SubFactor
+		);
+		if (FAILED(hr))
+		{
+			wprintf_s(L"\n WinBioDeleteTemplate failed. hr = 0x%x\n", hr);
+			goto e_Exit;
+		}
+		else
+		{
+			wprintf_s(L"\n WinBioDeleteTemplate SubFactor = %d success.\n", SubFactor);
+		}
+	}
+	//KennyKang 20210812 end
+
+e_Exit:
+	if (subFactorArray != NULL)
+	{
+		WinBioFree(subFactorArray);
+		subFactorArray = NULL;
+	}
+
+	if (sessionHandle != NULL)
+	{
+		WinBioCloseSession(sessionHandle);
+		sessionHandle = NULL;
+	}
+
+	//wprintf_s(L"Press any key to exit...");
+	//_getch();
 	return hr;
 }
 
@@ -1228,6 +1467,7 @@ int main(char *argv[], int argc)
 	wprintf_s(L"   g -> EnumEnrollments\n");
 	wprintf_s(L"   h -> EnumDatabases\n");
 	wprintf_s(L"   i -> EnumSvcProviders\n");
+	wprintf_s(L"   j -> DeleteTemplate\n");
 
 	scanf("%c", &ch);
 	switch (ch)
@@ -1280,6 +1520,10 @@ VerifyAgain:
 
 		case 'i':
 			EnumSvcProviders();
+			break;
+
+		case 'j':
+			DeleteTemplate();
 			break;
 
 		default:
