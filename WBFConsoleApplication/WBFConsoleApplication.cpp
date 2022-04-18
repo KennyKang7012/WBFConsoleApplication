@@ -12,12 +12,75 @@
 #include <winbio.h>
 #include <winbio_types.h>
 #include <winerror.h>
-#include <wincred.h >
+#include <wincred.h>
 #include <locale.h>
 
 #pragma comment(lib, "Winbio.lib")
 
 using namespace std;
+
+//------------------------------------------------------------------------
+// Forward declarations.
+HRESULT EnrollSysPoolWithCallback(
+	BOOL bCancel,
+	BOOL bDiscard,
+	WINBIO_BIOMETRIC_SUBTYPE subFactor);
+
+VOID CALLBACK EnrollCaptureCallback(
+	__in_opt PVOID EnrollCallbackContext,
+	__in HRESULT OperationStatus,
+	__in WINBIO_REJECT_DETAIL RejectDetail);
+
+typedef struct _ENROLL_CALLBACK_CONTEXT {
+	WINBIO_SESSION_HANDLE SessionHandle;
+	WINBIO_UNIT_ID UnitId;
+	WINBIO_BIOMETRIC_SUBTYPE SubFactor;
+} ENROLL_CALLBACK_CONTEXT, *PENROLL_CALLBACK_CONTEXT;
+
+HRESULT CaptureSampleWithCallback(
+	BOOL bCancel
+);
+
+VOID CALLBACK CaptureSampleCallback(
+	__in_opt PVOID CaptureCallbackContext,
+	__in HRESULT OperationStatus,
+	__in WINBIO_UNIT_ID UnitId,
+	__in_bcount(SampleSize) PWINBIO_BIR Sample,
+	__in SIZE_T SampleSize,
+	__in WINBIO_REJECT_DETAIL RejectDetail
+);
+
+HRESULT GetCredentialState();
+
+HRESULT VerifyWithCallback(BOOL bCancel, WINBIO_BIOMETRIC_SUBTYPE subFactor);
+
+VOID CALLBACK VerifyCallback(
+	__in_opt PVOID VerifyCallbackContext,
+	__in HRESULT OperationStatus,
+	__in WINBIO_UNIT_ID UnitId,
+	__in BOOLEAN Match,
+	__in WINBIO_REJECT_DETAIL RejectDetail
+);
+
+HRESULT IdentifyWithCallback(BOOL bCancel);
+
+VOID CALLBACK IdentifyCallback(
+	__in_opt PVOID IdentifyCallbackContext,
+	__in HRESULT OperationStatus,
+	__in WINBIO_UNIT_ID UnitId,
+	__in WINBIO_IDENTITY *Identity,
+	__in WINBIO_BIOMETRIC_SUBTYPE SubFactor,
+	__in WINBIO_REJECT_DETAIL RejectDetail
+);
+
+HRESULT LocateSensorWithCallback(BOOL bCancel);
+
+VOID CALLBACK LocateSensorCallback(
+	__in_opt PVOID LocateCallbackContext,
+	__in HRESULT OperationStatus,
+	__in WINBIO_UNIT_ID UnitId
+);
+//------------------------------------------------------------------------
 
 typedef struct _SUBFACTOR_TEXT {
 	WINBIO_BIOMETRIC_SUBTYPE SubFactor;
@@ -128,7 +191,7 @@ HRESULT EnumerateSensors()
 			unitSchema[index].Description);
 		wprintf_s(L"\tManufacturer: %s\n",
 			unitSchema[index].Manufacturer);
-		wprintf_s(L"\tModel: %s\n",
+		wprintf_s(L"\tModel: %S\n",
 			unitSchema[index].Model);
 		wprintf_s(L"\tSerial no: %s\n",
 			unitSchema[index].SerialNumber);
@@ -145,70 +208,6 @@ e_Exit:
 		unitSchema = NULL;
 	}
 
-	//wprintf_s(L"\nPress any key to exit...");
-	//_getch();
-	return hr;
-}
-
-HRESULT EnumerateSensors(WINBIO_UNIT_ID *pUnitId)
-{
-	// Declare variables.
-	HRESULT hr = S_OK;
-	PWINBIO_UNIT_SCHEMA unitSchema = NULL;
-	SIZE_T unitCount = 0;
-	SIZE_T index = 0;
-
-	// Enumerate the installed biometric units.
-	hr = WinBioEnumBiometricUnits(
-		WINBIO_TYPE_FINGERPRINT,        // Type of biometric unit
-		&unitSchema,                    // Array of unit schemas
-		&unitCount);                   // Count of unit schemas
-
-	if (FAILED(hr))
-	{
-		wprintf_s(L"\n WinBioEnumBiometricUnits failed. hr = 0x%x\n", hr);
-		goto e_Exit;
-	}
-
-	if (unitCount >= 1)
-		*pUnitId = unitSchema[0].UnitId;
-
-	// Display information for each installed biometric unit.
-	wprintf_s(L"\nSensors: \n");
-	for (index = 0; index < unitCount; ++index)
-	{
-		wprintf_s(L"\n[%lld]: \tUnit ID: %d\n",
-			index,
-			unitSchema[index].UnitId);
-		wprintf_s(L"\tDevice instance ID: %s\n",
-			unitSchema[index].DeviceInstanceId);
-		wprintf_s(L"\tPool type: %d\n",
-			unitSchema[index].PoolType);
-		wprintf_s(L"\tBiometric factor: %d\n",
-			unitSchema[index].BiometricFactor);
-		wprintf_s(L"\tSensor subtype: %d\n",
-			unitSchema[index].SensorSubType);
-		wprintf_s(L"\tSensor capabilities: 0x%08x\n",
-			unitSchema[index].Capabilities);
-		wprintf_s(L"\tDescription: %s\n",
-			unitSchema[index].Description);
-		wprintf_s(L"\tManufacturer: %s\n",
-			unitSchema[index].Manufacturer);
-		wprintf_s(L"\tModel: %s\n",
-			unitSchema[index].Model);
-		wprintf_s(L"\tSerial no: %s\n",
-			unitSchema[index].SerialNumber);
-		wprintf_s(L"\tFirmware version: [%d.%d]\n",
-			unitSchema[index].FirmwareVersion.MajorVersion,
-			unitSchema[index].FirmwareVersion.MinorVersion);
-	}
-
-e_Exit:
-	if (unitSchema != NULL)
-	{
-		WinBioFree(unitSchema);
-		unitSchema = NULL;
-	}
 	//wprintf_s(L"\nPress any key to exit...");
 	//_getch();
 	return hr;
@@ -329,181 +328,6 @@ e_Exit:
 	{
 		CloseHandle(tokenHandle);
 	}
-	return hr;
-}
-
-HRESULT DeleteTemplate(WINBIO_BIOMETRIC_SUBTYPE subFactor)
-{
-	HRESULT hr = S_OK;
-	WINBIO_IDENTITY identity = { 0 };
-	WINBIO_SESSION_HANDLE sessionHandle = NULL;
-	WINBIO_UNIT_ID unitId = 0;
-
-	// Find the identity of the user.
-	hr = GetCurrentUserIdentity(&identity);
-	if (FAILED(hr))
-	{
-		wprintf_s(L"\n User identity not found. hr = 0x%x\n", hr);
-		goto e_Exit;
-	}
-
-	// Connect to the system pool. 
-	//
-	hr = WinBioOpenSession(
-		WINBIO_TYPE_FINGERPRINT,    // Service provider
-		WINBIO_POOL_SYSTEM,         // Pool type
-		WINBIO_FLAG_DEFAULT,        // Configuration and access
-		NULL,                       // Array of biometric unit IDs
-		0,                          // Count of biometric unit IDs
-		NULL,                       // Database ID
-		&sessionHandle              // [out] Session handle
-	);
-	if (FAILED(hr))
-	{
-		wprintf_s(L"\n WinBioEnumBiometricUnits failed. hr = 0x%x\n", hr);
-		goto e_Exit;
-	}
-
-	// Locate the sensor.
-	//
-	wprintf_s(L"\n Swipe your finger on the sensor...\n");
-	hr = WinBioLocateSensor(sessionHandle, &unitId);
-	if (FAILED(hr))
-	{
-		wprintf_s(L"\n WinBioLocateSensor failed. hr = 0x%x\n", hr);
-		goto e_Exit;
-	}
-
-	// Delete the template identified by the subFactor argument.
-	//
-	hr = WinBioDeleteTemplate(
-		sessionHandle,
-		unitId,
-		&identity,
-		subFactor
-	);
-	if (FAILED(hr))
-	{
-		wprintf_s(L"\n WinBioDeleteTemplate failed. hr = 0x%x\n", hr);
-		goto e_Exit;
-	}
-
-e_Exit:
-	if (sessionHandle != NULL)
-	{
-		WinBioCloseSession(sessionHandle);
-		sessionHandle = NULL;
-	}
-
-	wprintf_s(L"Press any key to exit...");
-	_getch();
-	return hr;
-}
-
-HRESULT DeleteTemplate()
-{
-	HRESULT hr = S_OK;
-	WINBIO_IDENTITY identity = { 0 };
-	WINBIO_SESSION_HANDLE sessionHandle = NULL;
-	WINBIO_UNIT_ID unitId = 0;
-	PWINBIO_BIOMETRIC_SUBTYPE subFactorArray = NULL;
-	WINBIO_BIOMETRIC_SUBTYPE SubFactor = 0;
-	SIZE_T subFactorCount = 0;
-
-	// Find the identity of the user.
-	hr = GetCurrentUserIdentity(&identity);
-	if (FAILED(hr))
-	{
-		wprintf_s(L"\n User identity not found. hr = 0x%x\n", hr);
-		goto e_Exit;
-	}
-
-	// Connect to the system pool. 
-	//
-	hr = WinBioOpenSession(
-		WINBIO_TYPE_FINGERPRINT,    // Service provider
-		WINBIO_POOL_SYSTEM,         // Pool type
-		WINBIO_FLAG_DEFAULT,        // Configuration and access
-		NULL,                       // Array of biometric unit IDs
-		0,                          // Count of biometric unit IDs
-		NULL,                       // Database ID
-		&sessionHandle              // [out] Session handle
-	);
-	if (FAILED(hr))
-	{
-		wprintf_s(L"\n WinBioEnumBiometricUnits failed. hr = 0x%x\n", hr);
-		goto e_Exit;
-	}
-
-	//KennyKang 20210812 start
-	// Locate the sensor.
-	//
-	//wprintf_s(L"\n Swipe your finger on the sensor...\n");
-	//hr = WinBioLocateSensor(sessionHandle, &unitId);
-	//if (FAILED(hr))
-	//{
-	//	wprintf_s(L"\n WinBioLocateSensor failed. hr = 0x%x\n", hr);
-	//	goto e_Exit;
-	//}
-
-	EnumerateSensors(&unitId);
-	wprintf_s(L"\n Enrollments for this user on Unit ID %d:", unitId);
-
-	// Retrieve the biometric sub-factors for the template.
-	hr = WinBioEnumEnrollments(
-		sessionHandle,              // Session handle
-		unitId,                     // Biometric unit ID
-		&identity,                  // Template ID
-		&subFactorArray,            // Subfactors
-		&subFactorCount             // Count of subfactors
-	);
-	if (FAILED(hr))
-	{
-		wprintf_s(L"\n WinBioEnumEnrollments failed. hr = 0x%x\n", hr);
-		goto e_Exit;
-	}
-
-	// Print the sub-factor(s) to the console.
-	wprintf_s(L"\n Enrollments subFactorCount %lld:", subFactorCount);
-	for (SIZE_T index = 0; index < subFactorCount; ++index)
-	{
-		SubFactor = subFactorArray[index];
-
-		// Delete the template identified by the subFactor argument.
-		//
-		hr = WinBioDeleteTemplate(
-			sessionHandle,
-			unitId,
-			&identity,
-			SubFactor
-		);
-		if (FAILED(hr))
-		{
-			wprintf_s(L"\n WinBioDeleteTemplate failed. hr = 0x%x\n", hr);
-			goto e_Exit;
-		}
-		else
-		{
-			wprintf_s(L"\n WinBioDeleteTemplate SubFactor = %d success.\n", SubFactor);
-		}
-	}
-	//KennyKang 20210812 end
-
-e_Exit:
-	if (subFactorArray != NULL)
-	{
-		WinBioFree(subFactorArray);
-		subFactorArray = NULL;
-	}
-
-	if (sessionHandle != NULL)
-	{
-		WinBioCloseSession(sessionHandle);
-		sessionHandle = NULL;
-	}
-
-	//wprintf_s(L"Press any key to exit...");
-	//_getch();
 	return hr;
 }
 
@@ -1449,12 +1273,1211 @@ e_Exit:
 	return hr;
 }
 
+int EnumerateSensors(WINBIO_UNIT_ID *pUnitID, bool ShowMessage)
+{
+	HRESULT hr = S_OK;
+	PWINBIO_UNIT_SCHEMA unitSchema = NULL;
+	SIZE_T unitCount = 0;
+	SIZE_T index = 0;
+
+	// Enumerate the installed biometric units.
+	hr = WinBioEnumBiometricUnits(
+		WINBIO_TYPE_FINGERPRINT,        // Type of biometric unit
+		&unitSchema,                    // Array of unit schemas
+		&unitCount);                   // Count of unit schemas
+
+	if (FAILED(hr))
+	{
+		wprintf_s(L"\n WinBioEnumBiometricUnits failed. hr = 0x%x\n", hr);
+		//return FALSE;
+		return -999;
+	}
+
+	if (unitCount >= 1)
+		*pUnitID = unitSchema[0].UnitId;
+
+	if (ShowMessage)
+	{
+		for (index = 0; index < unitCount; ++index)
+		{
+			wprintf_s(L"[%d] => Unit ID: %d", index, unitSchema[index].UnitId);
+			wprintf_s(L"Device instance ID: %s", unitSchema[index].DeviceInstanceId);
+			wprintf_s(L"Pool type: %d [%s]", unitSchema[index].PoolType, unitSchema[index].PoolType == WINBIO_POOL_SYSTEM ? _T("System") : _T("-"));
+			wprintf_s(L"Biometric factor: %d [%s]", unitSchema[index].BiometricFactor, unitSchema[index].BiometricFactor == WINBIO_TYPE_FINGERPRINT ? _T("Fingerprint") : _T("-"));
+			wprintf_s(L"Sensor subtype: %d [%s]", unitSchema[index].SensorSubType, unitSchema[index].SensorSubType == WINBIO_FP_SENSOR_SUBTYPE_TOUCH ? _T("Touch") : _T("-"));
+			wprintf_s(L"Sensor capabilities: 0x%08x [%s]", unitSchema[index].Capabilities, unitSchema[index].Capabilities == WINBIO_CAPABILITY_SENSOR ? _T("Sensor") : _T("-"));
+			wprintf_s(L"Description: %s", unitSchema[index].Description);
+			wprintf_s(L"Manufacturer: %s", unitSchema[index].Manufacturer);
+			wprintf_s(L"Model: %s", unitSchema[index].Model);
+			wprintf_s(L"Serial no: %s", unitSchema[index].SerialNumber);
+			wprintf_s(L"Firmware version: [%d.%d]", unitSchema[index].FirmwareVersion.MajorVersion, unitSchema[index].FirmwareVersion.MinorVersion);
+		}
+	}
+
+	if (unitSchema != NULL)
+	{
+		WinBioFree(unitSchema);
+		unitSchema = NULL;
+	}
+	return (int)unitCount;
+}
+
+HRESULT DeleteTemplate()
+{
+	HRESULT hr = S_OK;
+	WINBIO_IDENTITY identity = { 0 };
+	WINBIO_SESSION_HANDLE sessionHandle = NULL;
+	WINBIO_UNIT_ID unitId = 0;
+	PWINBIO_BIOMETRIC_SUBTYPE subFactorArray = NULL;
+	SIZE_T subFactorCount = 0;
+	WINBIO_BIOMETRIC_SUBTYPE subFactor = WINBIO_SUBTYPE_NO_INFORMATION;
+
+	// Find the identity of the user.
+	hr = GetCurrentUserIdentity(&identity);
+	if (FAILED(hr))
+	{
+		wprintf_s(L"\n User identity not found. hr = 0x%x\n", hr);
+		goto e_Exit;
+	}
+
+	// Connect to the system pool. 
+	//
+	hr = WinBioOpenSession(
+		WINBIO_TYPE_FINGERPRINT,    // Service provider
+		WINBIO_POOL_SYSTEM,         // Pool type
+		WINBIO_FLAG_DEFAULT,        // Configuration and access
+		NULL,                       // Array of biometric unit IDs
+		0,                          // Count of biometric unit IDs
+		NULL,                       // Database ID
+		&sessionHandle              // [out] Session handle
+	);
+	if (FAILED(hr))
+	{
+		wprintf_s(L"\n WinBioEnumBiometricUnits failed. hr = 0x%x\n", hr);
+		goto e_Exit;
+	}
+
+	// Locate the sensor.
+	//
+	//wprintf_s(L"\n Swipe your finger on the sensor...\n");
+	//hr = WinBioLocateSensor(sessionHandle, &unitId);
+	//if (FAILED(hr))
+	//{
+	//	wprintf_s(L"\n WinBioLocateSensor failed. hr = 0x%x\n", hr);
+	//	goto e_Exit;
+	//}
+
+	EnumerateSensors(&unitId, false);
+	wprintf_s(L"\n Enrollments for this user on Unit ID %d:", unitId);
+
+	// Retrieve the biometric sub-factors for the template.
+	hr = WinBioEnumEnrollments(
+		sessionHandle,              // Session handle
+		unitId,                     // Biometric unit ID
+		&identity,                  // Template ID
+		&subFactorArray,            // Subfactors
+		&subFactorCount             // Count of subfactors
+	);
+	if (FAILED(hr))
+	{
+		wprintf_s(L"\n WinBioEnumEnrollments failed. hr = 0x%x", hr);
+		wprintf_s(L"\n The biometric sample doesn't match any known identity.\n");
+		goto e_Exit;
+	}
+	wprintf_s(L"\n subFactorCount %d:", subFactorCount);
+
+	for (SIZE_T index = 0; index < subFactorCount; ++index)
+	{
+		subFactor = subFactorArray[index];
+		wprintf_s(L"\n subFactorArray[%d] %d:", index, subFactorArray[index]);
+		wprintf_s(L"\n subFactor %d:", subFactor);
+
+		// Delete the template identified by the subFactor argument.
+		//
+		hr = WinBioDeleteTemplate(
+			sessionHandle,
+			unitId,
+			&identity,
+			subFactor
+		);
+		if (FAILED(hr))
+		{
+			wprintf_s(L"\n WinBioDeleteTemplate failed. hr = 0x%x\n", hr);
+			goto e_Exit;
+		}
+		else
+		{
+			wprintf_s(L"\n Delete %d Template Success\n", subFactor);
+		}
+	}
+
+e_Exit:
+	if (subFactorArray != NULL)
+	{
+		WinBioFree(subFactorArray);
+		subFactorArray = NULL;
+	}
+
+	if (sessionHandle != NULL)
+	{
+		WinBioCloseSession(sessionHandle);
+		sessionHandle = NULL;
+	}
+
+	//wprintf_s(L"\n Press any key to exit...");
+	//_getch();
+	return hr;
+}
+
+HRESULT DeleteTemplate(WINBIO_BIOMETRIC_SUBTYPE subFactor)
+{
+	HRESULT hr = S_OK;
+	WINBIO_IDENTITY identity = { 0 };
+	WINBIO_SESSION_HANDLE sessionHandle = NULL;
+	WINBIO_UNIT_ID unitId = 0;
+
+	// Find the identity of the user.
+	hr = GetCurrentUserIdentity(&identity);
+	if (FAILED(hr))
+	{
+		wprintf_s(L"\n User identity not found. hr = 0x%x\n", hr);
+		goto e_Exit;
+	}
+
+	// Connect to the system pool. 
+	//
+	hr = WinBioOpenSession(
+		WINBIO_TYPE_FINGERPRINT,    // Service provider
+		WINBIO_POOL_SYSTEM,         // Pool type
+		WINBIO_FLAG_DEFAULT,        // Configuration and access
+		NULL,                       // Array of biometric unit IDs
+		0,                          // Count of biometric unit IDs
+		NULL,                       // Database ID
+		&sessionHandle              // [out] Session handle
+	);
+	if (FAILED(hr))
+	{
+		wprintf_s(L"\n WinBioEnumBiometricUnits failed. hr = 0x%x\n", hr);
+		goto e_Exit;
+	}
+
+	// Locate the sensor.
+	//
+	//wprintf_s(L"\n Swipe your finger on the sensor...\n");
+	//hr = WinBioLocateSensor(sessionHandle, &unitId);
+	//if (FAILED(hr))
+	//{
+	//	wprintf_s(L"\n WinBioLocateSensor failed. hr = 0x%x\n", hr);
+	//	goto e_Exit;
+	//}
+
+	EnumerateSensors(&unitId, false);
+	wprintf_s(L"\n Enrollments for this user on Unit ID %d:", unitId);
+	
+	// Delete the template identified by the subFactor argument.
+	//
+	hr = WinBioDeleteTemplate(
+		sessionHandle,
+		unitId,
+		&identity,
+		subFactor
+	);
+	if (FAILED(hr))
+	{
+		wprintf_s(L"\n WinBioDeleteTemplate failed. hr = 0x%x\n", hr);
+		goto e_Exit;
+	}
+
+e_Exit:
+	if (sessionHandle != NULL)
+	{
+		WinBioCloseSession(sessionHandle);
+		sessionHandle = NULL;
+	}
+
+	wprintf_s(L"Press any key to exit...");
+	_getch();
+
+	return hr;
+}
+
+//------------------------------------------------------------------------
+// The following function enrolls a user's fingerprint in the system pool.
+// The function calls WinBioEnrollCaptureWithCallback and waits for the
+// asynchronous enrollment process to be completed or canceled.
+//
+HRESULT EnrollSysPoolWithCallback(
+	BOOL bCancel,
+	BOOL bDiscard,
+	WINBIO_BIOMETRIC_SUBTYPE subFactor)
+{
+	// Declare variables
+	HRESULT hr = S_OK;
+	WINBIO_IDENTITY identity = { 0 };
+	WINBIO_SESSION_HANDLE sessionHandle = NULL;
+	WINBIO_UNIT_ID unitId = 0;
+	BOOLEAN isNewTemplate = TRUE;
+	ENROLL_CALLBACK_CONTEXT callbackContext = { 0 };
+
+	// Connect to the system pool. 
+	hr = WinBioOpenSession(
+		WINBIO_TYPE_FINGERPRINT,    // Service provider
+		WINBIO_POOL_SYSTEM,         // Pool type
+		WINBIO_FLAG_DEFAULT,        // Configuration and access
+		NULL,                       // Array of biometric unit IDs
+		0,                          // Count of biometric unit IDs
+		NULL,                       // Database ID
+		&sessionHandle              // [out] Session handle
+	);
+	if (FAILED(hr))
+	{
+		wprintf_s(L"\n WinBioEnumBiometricUnits failed. ");
+		wprintf_s(L"hr = 0x%x\n", hr);
+		goto e_Exit;
+	}
+
+	// Locate the sensor.
+	wprintf_s(L"\n Swipe your finger to locate the sensor...\n");
+	hr = WinBioLocateSensor(sessionHandle, &unitId);
+	if (FAILED(hr))
+	{
+		wprintf_s(L"\n WinBioLocateSensor failed. hr = 0x%x\n", hr);
+		goto e_Exit;
+	}
+
+	// Begin the enrollment sequence. 
+	hr = WinBioEnrollBegin(
+		sessionHandle,      // Handle to open biometric session
+		subFactor,          // Finger to create template for
+		unitId              // Biometric unit ID
+	);
+	if (FAILED(hr))
+	{
+		wprintf_s(L"\n WinBioEnrollBegin failed. hr = 0x%x\n", hr);
+		goto e_Exit;
+	}
+
+	// Set up the custom callback context structure.
+	callbackContext.SessionHandle = sessionHandle;
+	callbackContext.UnitId = unitId;
+	callbackContext.SubFactor = subFactor;
+
+	// Call WinBioEnrollCaptureWithCallback. This is an asynchronous
+	// method that returns immediately.
+	hr = WinBioEnrollCaptureWithCallback(
+		sessionHandle,          // Handle to open biometric session
+		EnrollCaptureCallback,  // Callback function
+		&callbackContext        // Pointer to the custom context
+	);
+	if (FAILED(hr))
+	{
+		wprintf_s(L"\n WinBioEnrollCaptureWithCallback failed. ");
+		wprintf_s(L"hr = 0x%x\n", hr);
+		goto e_Exit;
+	}
+	wprintf_s(L"\n Swipe the sensor with the appropriate finger...\n");
+
+	// Cancel the enrollment if the bCancel flag is set.
+	if (bCancel)
+	{
+		wprintf_s(L"\n Starting CANCEL timer...\n");
+		Sleep(7000);
+
+		wprintf_s(L"\n Calling WinBioCancel\n");
+		hr = WinBioCancel(sessionHandle);
+		if (FAILED(hr))
+		{
+			wprintf_s(L"\n WinBioCancel failed. hr = 0x%x\n", hr);
+			goto e_Exit;
+		}
+	}
+
+	// Wait for the asynchronous enrollment process to complete
+	// or be canceled.
+	hr = WinBioWait(sessionHandle);
+	if (FAILED(hr))
+	{
+		wprintf_s(L"\n WinBioWait failed. hr = 0x%x\n", hr);
+	}
+
+	// Discard the enrollment if the bDiscard flag is set.
+	// Commit the enrollment if the flag is not set.
+	if (bDiscard)
+	{
+		wprintf_s(L"\n Discarding enrollment...\n");
+		hr = WinBioEnrollDiscard(sessionHandle);
+		if (FAILED(hr))
+		{
+			wprintf_s(L"\n WinBioLocateSensor failed. ");
+			wprintf_s(L"hr = 0x%x\n", hr);
+		}
+		goto e_Exit;
+	}
+	else
+	{
+		wprintf_s(L"\n Committing enrollment...\n");
+		hr = WinBioEnrollCommit(
+			sessionHandle,      // Handle to open biometric session
+			&identity,          // WINBIO_IDENTITY object for the user
+			&isNewTemplate);    // Is this a new template
+
+		if (FAILED(hr))
+		{
+			wprintf_s(L"\n WinBioEnrollCommit failed. hr = 0x%x\n", hr);
+			goto e_Exit;
+		}
+	}
+
+e_Exit:
+	if (sessionHandle != NULL)
+	{
+		WinBioCloseSession(sessionHandle);
+		sessionHandle = NULL;
+	}
+
+	wprintf_s(L"\n Press any key to exit...");
+	_getch();
+
+	return hr;
+}
+
+//------------------------------------------------------------------------
+// The following function is the callback for the Windows Biometric
+// Framework WinBioEnrollCaptureWithCallback() function. 
+//
+VOID CALLBACK EnrollCaptureCallback(
+	__in_opt PVOID EnrollCallbackContext,
+	__in HRESULT OperationStatus,
+	__in WINBIO_REJECT_DETAIL RejectDetail
+)
+{
+	// Declare variables.
+	HRESULT hr = S_OK;
+	static SIZE_T swipeCount = 1;
+
+	PENROLL_CALLBACK_CONTEXT callbackContext =
+		(PENROLL_CALLBACK_CONTEXT)EnrollCallbackContext;
+
+	wprintf_s(L"\n EnrollCaptureCallback executing\n");
+	wprintf_s(L"\n Sample %d captured", swipeCount++);
+
+	// The capture was not acceptable or the enrollment operation
+	// failed.
+	if (FAILED(OperationStatus))
+	{
+		if (OperationStatus == WINBIO_E_BAD_CAPTURE)
+		{
+			wprintf_s(L"\n Bad capture; reason: %d. (%ws)\n", RejectDetail, ConvertRejectDetailToString(RejectDetail));
+			wprintf_s(L"\n Swipe your finger to capture another sample.\n");
+
+			// Try again.
+			hr = WinBioEnrollCaptureWithCallback(
+				callbackContext->SessionHandle, // Open session handle
+				EnrollCaptureCallback,          // Callback function
+				EnrollCallbackContext           // Callback context
+			);
+			if (FAILED(hr))
+			{
+				wprintf_s(L"WinBioEnrollCaptureWithCallback failed.");
+				wprintf_s(L"hr = 0x%x\n", hr);
+			}
+		}
+		else
+		{
+			wprintf_s(L"EnrollCaptureCallback failed.");
+			wprintf_s(L"OperationStatus = 0x%x\n", OperationStatus);
+		}
+		goto e_Exit;
+	}
+
+	// The enrollment operation requires more fingerprint swipes.
+	// This is normal and depends on your hardware. Typically, at least
+	// three swipes are required.
+	if (OperationStatus == WINBIO_I_MORE_DATA)
+	{
+		wprintf_s(L"\n More data required.");
+		wprintf_s(L"\n Swipe your finger on the sensor again.");
+
+		hr = WinBioEnrollCaptureWithCallback(
+			callbackContext->SessionHandle,
+			EnrollCaptureCallback,
+			EnrollCallbackContext
+		);
+		if (FAILED(hr))
+		{
+			wprintf_s(L"WinBioEnrollCaptureWithCallback failed. ");
+			wprintf_s(L"hr = 0x%x\n", hr);
+		}
+		goto e_Exit;
+	}
+
+	wprintf_s(L"\n Template completed\n");
+
+e_Exit:
+
+	return;
+}
+
+HRESULT CaptureSampleWithCallback(BOOL bCancel)
+{
+	HRESULT hr = S_OK;
+	WINBIO_SESSION_HANDLE sessionHandle = NULL;
+
+	// Connect to the system pool. 
+	hr = WinBioOpenSession(
+		WINBIO_TYPE_FINGERPRINT,    // Service provider
+		WINBIO_POOL_SYSTEM,         // Pool type
+		WINBIO_FLAG_RAW,            // Raw access
+		NULL,                       // Array of biometric unit IDs
+		0,                          // Count of biometric unit IDs
+		WINBIO_DB_DEFAULT,          // Default database
+		&sessionHandle              // [out] Session handle
+	);
+	if (FAILED(hr))
+	{
+		wprintf_s(L"\n WinBioOpenSession failed. hr = 0x%x\n", hr);
+		goto e_Exit;
+	}
+
+	// Capture a biometric sample asynchronously.
+	wprintf_s(L"\n Calling WinBioCaptureSampleWithCallback ");
+	hr = WinBioCaptureSampleWithCallback(
+		sessionHandle,                  // Open session handle
+		WINBIO_NO_PURPOSE_AVAILABLE,    // Intended use of the sample
+		WINBIO_DATA_FLAG_RAW,           // Sample format
+		CaptureSampleCallback,          // Callback function
+		NULL                            // Optional context
+	);
+	if (FAILED(hr))
+	{
+		wprintf_s(L"\n WinBioCaptureSampleWithCallback failed. ");
+		wprintf_s(L"hr = 0x%x\n", hr);
+		goto e_Exit;
+	}
+	wprintf_s(L"\n Swipe the sensor ...\n");
+
+	// Cancel the capture process if the bCancel flag is set.
+	if (bCancel)
+	{
+		wprintf_s(L"\n Starting CANCEL timer...");
+		Sleep(7000);
+
+		wprintf_s(L"\n Calling WinBioCancel\n");
+		hr = WinBioCancel(sessionHandle);
+		if (FAILED(hr))
+		{
+			wprintf_s(L"\n WinBioCancel failed. hr = 0x%x\n", hr);
+			goto e_Exit;
+		}
+	}
+
+	// Wait for the asynchronous capture process to complete 
+	// or be canceled.
+	hr = WinBioWait(sessionHandle);
+	if (FAILED(hr))
+	{
+		wprintf_s(L"\n WinBioWait failed. hr = 0x%x\n", hr);
+	}
+
+e_Exit:
+
+	if (sessionHandle != NULL)
+	{
+		WinBioCloseSession(sessionHandle);
+		sessionHandle = NULL;
+	}
+
+	wprintf_s(L"\n Press any key to exit...");
+	_getch();
+
+	return hr;
+}
+
+//------------------------------------------------------------------------
+// The following function is the callback for WinBioCaptureSampleWithCallback.
+// The function filters the response from the biometric subsystem and 
+// writes a result to the console window.
+//
+VOID CALLBACK CaptureSampleCallback(
+	__in_opt PVOID CaptureCallbackContext,
+	__in HRESULT OperationStatus,
+	__in WINBIO_UNIT_ID UnitId,
+	__in_bcount(SampleSize) PWINBIO_BIR Sample,
+	__in SIZE_T SampleSize,
+	__in WINBIO_REJECT_DETAIL RejectDetail
+)
+{
+	UNREFERENCED_PARAMETER(CaptureCallbackContext);
+
+	wprintf_s(L"\n CaptureSampleCallback executing");
+	wprintf_s(L"\n Swipe processed - Unit ID: %d", UnitId);
+
+	if (FAILED(OperationStatus))
+	{
+		if (OperationStatus == WINBIO_E_BAD_CAPTURE)
+		{
+			wprintf_s(L"\n Bad capture; reason: %d\n", RejectDetail);
+		}
+		else
+		{
+			wprintf_s(L"\n WinBioCaptureSampleWithCallback failed. ");
+			wprintf_s(L" OperationStatus = 0x%x\n", OperationStatus);
+		}
+		goto e_Exit;
+	}
+
+	wprintf_s(L"\n Captured %d bytes.\n", SampleSize);
+
+e_Exit:
+
+	if (Sample != NULL)
+	{
+		WinBioFree(Sample);
+		Sample = NULL;
+	}
+}
+
+HRESULT GetCredentialState()
+{
+	// Declare variables.
+	HRESULT hr = S_OK;
+	WINBIO_IDENTITY identity;
+	WINBIO_CREDENTIAL_STATE credState;
+
+	// Find the identity of the user.
+	wprintf_s(L"\n Finding user identity.\n");
+	hr = GetCurrentUserIdentity(&identity);
+	if (FAILED(hr))
+	{
+		wprintf_s(L"\n User identity not found. hr = 0x%x\n", hr);
+		return hr;
+	}
+
+	// Find the credential state for the user.
+	wprintf_s(L"\n Calling WinBioGetCredentialState.\n");
+	hr = WinBioGetCredentialState(
+		identity,                      // User GUID or SID
+		WINBIO_CREDENTIAL_PASSWORD,    // Credential type
+		&credState                     // [out] Credential state
+	);
+	if (FAILED(hr))
+	{
+		wprintf_s(L"\n WinBioGetCredentialState failed. hr = 0x%x\n", hr);
+		goto e_Exit;
+	}
+
+	// Print the credential state.
+	switch (credState)
+	{
+	case WINBIO_CREDENTIAL_SET:
+		wprintf_s(L"\n Credential set.\n");
+		break;
+	case WINBIO_CREDENTIAL_NOT_SET:
+		wprintf_s(L"\n Credential NOT set.\n");
+		break;
+	default:
+		wprintf_s(L"\n ERROR: Invalid credential state.\n");
+		hr = E_FAIL;
+	}
+
+e_Exit:
+
+	wprintf_s(L"\n Press any key to exit...");
+	_getch();
+
+	return hr;
+
+}
+
+HRESULT VerifyWithCallback(BOOL bCancel, WINBIO_BIOMETRIC_SUBTYPE subFactor)
+{
+	// Declare variables.
+	HRESULT hr = S_OK;
+	WINBIO_SESSION_HANDLE sessionHandle = NULL;
+	WINBIO_UNIT_ID unitId = 0;
+	WINBIO_REJECT_DETAIL rejectDetail = 0;
+	WINBIO_IDENTITY identity = { 0 };
+
+	// Find the identity of the user.
+	hr = GetCurrentUserIdentity(&identity);
+	if (FAILED(hr))
+	{
+		wprintf_s(L"\n User identity not found. hr = 0x%x\n", hr);
+		goto e_Exit;
+	}
+
+	// Connect to the system pool. 
+	hr = WinBioOpenSession(
+		WINBIO_TYPE_FINGERPRINT,    // Service provider
+		WINBIO_POOL_SYSTEM,         // Pool type
+		WINBIO_FLAG_DEFAULT,        // Configuration and access
+		NULL,                       // Array of biometric unit IDs
+		0,                          // Count of biometric unit IDs
+		NULL,                       // Database ID
+		&sessionHandle              // [out] Session handle
+	);
+	if (FAILED(hr))
+	{
+		wprintf_s(L"\n WinBioOpenSession failed. hr = 0x%x\n", hr);
+		goto e_Exit;
+	}
+
+	// Verify a biometric sample asynchronously.
+	wprintf_s(L"\n Calling WinBioVerifyWithCallback.\n");
+	hr = WinBioVerifyWithCallback(
+		sessionHandle,              // Open session handle
+		&identity,                  // User SID or GUID
+		subFactor,                  // Sample sub-factor
+		VerifyCallback,             // Callback function
+		NULL                        // Optional context
+	);
+	if (FAILED(hr))
+	{
+		wprintf_s(L"\n WinBioVerifyWithCallback failed. hr = 0x%x\n", hr);
+		goto e_Exit;
+	}
+	wprintf_s(L"\n Swipe the sensor ...\n");
+
+	// Cancel the identification if the bCancel flag is set.
+	if (bCancel)
+	{
+		wprintf_s(L"\n Starting CANCEL timer...\n");
+		Sleep(7000);
+
+		wprintf_s(L"\n Calling WinBioCancel\n");
+		hr = WinBioCancel(sessionHandle);
+		if (FAILED(hr))
+		{
+			wprintf_s(L"\n WinBioCancel failed. hr = 0x%x\n", hr);
+			goto e_Exit;
+		}
+	}
+
+	// Wait for the asynchronous identification process to complete 
+	// or be canceled.
+	hr = WinBioWait(sessionHandle);
+	if (FAILED(hr))
+	{
+		wprintf_s(L"\n WinBioWait failed. hr = 0x%x\n", hr);
+	}
+
+e_Exit:
+	if (sessionHandle != NULL)
+	{
+		WinBioCloseSession(sessionHandle);
+		sessionHandle = NULL;
+	}
+
+	wprintf_s(L"\n Hit any key to continue...");
+	_getch();
+
+	return hr;
+}
+
+//------------------------------------------------------------------------
+// The following function is the callback for WinBioVerifyWithCallback.
+// The function filters the response from the biometric subsystem and 
+// writes a result to the console window.
+// 
+VOID CALLBACK VerifyCallback(
+	__in_opt PVOID VerifyCallbackContext,
+	__in HRESULT OperationStatus,
+	__in WINBIO_UNIT_ID UnitId,
+	__in BOOLEAN Match,
+	__in WINBIO_REJECT_DETAIL RejectDetail
+)
+{
+	UNREFERENCED_PARAMETER(VerifyCallbackContext);
+	UNREFERENCED_PARAMETER(Match);
+
+	wprintf_s(L"\n VerifyCallback executing");
+	wprintf_s(L"\n Swipe processed for unit ID %d\n", UnitId);
+
+	// The identity could not be verified.
+	if (FAILED(OperationStatus))
+	{
+		wprintf_s(L"\n Verification failed for the following reason:");
+		if (OperationStatus == WINBIO_E_NO_MATCH)
+		{
+			wprintf_s(L"\n No match.\n");
+		}
+		else if (OperationStatus == WINBIO_E_BAD_CAPTURE)
+		{
+			wprintf_s(L"\n Bad capture.\n ");
+			wprintf_s(L"\n Bad capture; reason: %d\n", RejectDetail);
+		}
+		else
+		{
+			wprintf_s(L"VerifyCallback failed.");
+			wprintf_s(L"OperationStatus = 0x%x\n", OperationStatus);
+		}
+		goto e_Exit;
+	}
+
+	// The user identity was verified.
+	wprintf_s(L"\n Fingerprint verified:\n");
+
+e_Exit:
+	return;
+}
+
+HRESULT IdentifyWithCallback(BOOL bCancel)
+{
+	// Declare variables.
+	HRESULT hr = S_OK;
+	WINBIO_SESSION_HANDLE sessionHandle = NULL;
+
+	// Connect to the system pool. 
+	hr = WinBioOpenSession(
+		WINBIO_TYPE_FINGERPRINT,    // Service provider
+		WINBIO_POOL_SYSTEM,         // Pool type 
+		WINBIO_FLAG_DEFAULT,        // Configuration and access 
+		NULL,                       // Array of biometric unit IDs 
+		0,                          // Count of biometric unit IDs 
+		WINBIO_DB_DEFAULT,          // Database ID 
+		&sessionHandle              // [out] Session handle
+	);
+	if (FAILED(hr))
+	{
+		wprintf_s(L"\n WinBioOpenSession failed. hr = 0x%x\n", hr);
+		goto e_Exit;
+	}
+
+	// Call WinBioIdentifyWithCallback. The method is asynchronous
+	// and returns immediately.
+	wprintf_s(L"\n Calling WinBioIdentifyWithCallback");
+	wprintf_s(L"\n Swipe the sensor ...\n");
+	hr = WinBioIdentifyWithCallback(
+		sessionHandle,              // Open biometric session
+		IdentifyCallback,           // Callback function
+		NULL                        // Optional context
+	);
+	if (FAILED(hr))
+	{
+		wprintf_s(L"\n WinBioIdentifyWithCallback failed. hr = 0x%x\n", hr);
+		goto e_Exit;
+	}
+
+	// Cancel user identification if the bCancel flag is set.
+	if (bCancel)
+	{
+		wprintf_s(L"\n Starting CANCEL timer...\n");
+		Sleep(7000);
+
+		wprintf_s(L"\n Calling WinBioCancel\n");
+		hr = WinBioCancel(sessionHandle);
+		if (FAILED(hr))
+		{
+			wprintf_s(L"\n WinBioCancel failed. hr = 0x%x\n", hr);
+			goto e_Exit;
+		}
+	}
+
+	// Wait for the asynchronous identification process to complete 
+	// or be canceled.
+	hr = WinBioWait(sessionHandle);
+	if (FAILED(hr))
+	{
+		wprintf_s(L"\n WinBioWait failed. hr = 0x%x\n", hr);
+	}
+
+e_Exit:
+
+	if (sessionHandle != NULL)
+	{
+		wprintf_s(L"\n Closing the session.\n");
+
+		hr = WinBioCloseSession(sessionHandle);
+		if (FAILED(hr))
+		{
+			wprintf_s(L"\n WinBioCloseSession failed. hr = 0x%x\n", hr);
+		}
+		sessionHandle = NULL;
+	}
+
+	wprintf_s(L"\n Hit any key to exit...");
+	_getch();
+
+	return hr;
+}
+
+//------------------------------------------------------------------------
+// The following function is the callback for WinBioIdentifyWithCallback.
+// The function filters the response from the biometric subsystem and 
+// writes a result to the console window.
+// 
+VOID CALLBACK IdentifyCallback(
+	__in_opt PVOID IdentifyCallbackContext,
+	__in HRESULT OperationStatus,
+	__in WINBIO_UNIT_ID UnitId,
+	__in WINBIO_IDENTITY *Identity,
+	__in WINBIO_BIOMETRIC_SUBTYPE SubFactor,
+	__in WINBIO_REJECT_DETAIL RejectDetail
+)
+{
+	UNREFERENCED_PARAMETER(IdentifyCallbackContext);
+	UNREFERENCED_PARAMETER(Identity);
+
+	wprintf_s(L"\n IdentifyCallback executing");
+	wprintf_s(L"\n Swipe processed for unit ID %d\n", UnitId);
+
+	// The attempt to process the fingerprint failed.
+	if (FAILED(OperationStatus))
+	{
+		if (OperationStatus == WINBIO_E_UNKNOWN_ID)
+		{
+			wprintf_s(L"\n Unknown identity.\n");
+		}
+		else if (OperationStatus == WINBIO_E_BAD_CAPTURE)
+		{
+			wprintf_s(L"\n Bad capture; reason: %d\n", RejectDetail);
+		}
+		else
+		{
+			wprintf_s(L"IdentifyCallback failed.");
+			wprintf_s(L"OperationStatus = 0x%x\n", OperationStatus);
+		}
+	}
+	// Processing succeeded and the finger swiped is written
+	// to the console window.
+	else
+	{
+		wprintf_s(L"\n The following finger was used:");
+		switch (SubFactor)
+		{
+			case WINBIO_SUBTYPE_NO_INFORMATION:
+				wprintf_s(L"\n No information\n");
+				break;
+			case WINBIO_ANSI_381_POS_RH_THUMB:
+				wprintf_s(L"\n RH thumb\n");
+				break;
+			case WINBIO_ANSI_381_POS_RH_INDEX_FINGER:
+				wprintf_s(L"\n RH index finger\n");
+				break;
+			case WINBIO_ANSI_381_POS_RH_MIDDLE_FINGER:
+				wprintf_s(L"\n RH middle finger\n");
+				break;
+			case WINBIO_ANSI_381_POS_RH_RING_FINGER:
+				wprintf_s(L"\n RH ring finger\n");
+				break;
+			case WINBIO_ANSI_381_POS_RH_LITTLE_FINGER:
+				wprintf_s(L"\n RH little finger\n");
+				break;
+			case WINBIO_ANSI_381_POS_LH_THUMB:
+				wprintf_s(L"\n LH thumb\n");
+				break;
+			case WINBIO_ANSI_381_POS_LH_INDEX_FINGER:
+				wprintf_s(L"\n LH index finger\n");
+				break;
+			case WINBIO_ANSI_381_POS_LH_MIDDLE_FINGER:
+				wprintf_s(L"\n LH middle finger\n");
+				break;
+			case WINBIO_ANSI_381_POS_LH_RING_FINGER:
+				wprintf_s(L"\n LH ring finger\n");
+				break;
+			case WINBIO_ANSI_381_POS_LH_LITTLE_FINGER:
+				wprintf_s(L"\n LH little finger\n");
+				break;
+			case WINBIO_SUBTYPE_ANY:
+				wprintf_s(L"\n Any finger\n");
+				break;
+			default:
+				break;
+		}
+	}
+}
+
+HRESULT LocateSensorWithCallback(BOOL bCancel)
+{
+	HRESULT hr = S_OK;
+	WINBIO_SESSION_HANDLE sessionHandle = NULL;
+	WINBIO_UNIT_ID unitId = 0;
+
+	// Connect to the system pool. 
+	hr = WinBioOpenSession(
+		WINBIO_TYPE_FINGERPRINT,    // Service provider
+		WINBIO_POOL_SYSTEM,         // Pool type
+		WINBIO_FLAG_DEFAULT,        // Configuration and access
+		NULL,                       // Array of biometric unit IDs
+		0,                          // Count of biometric unit IDs
+		NULL,                       // Database ID
+		&sessionHandle              // [out] Session handle
+	);
+	if (FAILED(hr))
+	{
+		wprintf_s(L"\n WinBioOpenSession failed. hr = 0x%x\n", hr);
+		goto e_Exit;
+	}
+
+	wprintf_s(L"\n Calling WinBioLocateSensorWithCallback.");
+	hr = WinBioLocateSensorWithCallback(
+		sessionHandle,          // Open biometric session
+		LocateSensorCallback,   // Callback function
+		NULL                    // Optional context
+	);
+	if (FAILED(hr))
+	{
+		wprintf_s(L"\n WinBioLocateSensorWithCallback failed.");
+		wprintf_s(L"hr = 0x%x\n", hr);
+		goto e_Exit;
+	}
+	wprintf_s(L"\n Swipe the sensor ...\n");
+
+	// Cancel the identification if the bCancel flag is set.
+	if (bCancel)
+	{
+		wprintf_s(L"\n Starting CANCEL timer...\n");
+		Sleep(7000);
+
+		wprintf_s(L"\n Calling WinBioCancel\n");
+		hr = WinBioCancel(sessionHandle);
+		if (FAILED(hr))
+		{
+			wprintf_s(L"\n WinBioCancel failed. hr = 0x%x\n", hr);
+			goto e_Exit;
+		}
+	}
+
+	// Wait for the asynchronous identification process to complete 
+	// or be canceled.
+	hr = WinBioWait(sessionHandle);
+	if (FAILED(hr))
+	{
+		wprintf_s(L"\n WinBioWait failed. hr = 0x%x\n", hr);
+	}
+
+e_Exit:
+
+	if (sessionHandle != NULL)
+	{
+		wprintf_s(L"\n Closing the session.\n");
+
+		hr = WinBioCloseSession(sessionHandle);
+		if (FAILED(hr))
+		{
+			wprintf_s(L"\n WinBioCloseSession failed. hr = 0x%x\n", hr);
+		}
+		sessionHandle = NULL;
+	}
+
+	wprintf_s(L"\n Hit any key to exit...");
+	_getch();
+
+	return hr;
+}
+
+//------------------------------------------------------------------------
+// The following function is the callback for 
+// WinBioLocateSensorWithCallback. The function filters the response 
+// from the biometric subsystem and writes a result to the console window.
+// 
+VOID CALLBACK LocateSensorCallback(
+	__in_opt PVOID LocateCallbackContext,
+	__in HRESULT OperationStatus,
+	__in WINBIO_UNIT_ID UnitId
+)
+{
+	UNREFERENCED_PARAMETER(LocateCallbackContext);
+
+	wprintf_s(L"\n LocateSensorCallback executing.");
+
+	// A sensor could not be located.
+	if (FAILED(OperationStatus))
+	{
+		wprintf_s(L"\n LocateSensorCallback failed.");
+		wprintf_s(L"OperationStatus = 0x%x\n", OperationStatus);
+	}
+	// A sensor was located.
+	else
+	{
+		wprintf_s(L"\n Selected unit ID: %d\n", UnitId);
+	}
+}
+
+HRESULT EnumEnrollments(PWINBIO_BIOMETRIC_SUBTYPE _subFactorArray, SIZE_T *_subFactorCount)
+{
+	// Declare variables.
+	HRESULT hr = S_OK;
+	WINBIO_IDENTITY identity = { 0 };
+	WINBIO_SESSION_HANDLE sessionHandle = NULL;
+	WINBIO_UNIT_ID unitId = 0;
+	PWINBIO_BIOMETRIC_SUBTYPE subFactorArray = NULL;
+	WINBIO_BIOMETRIC_SUBTYPE SubFactor = 0;
+	SIZE_T subFactorCount = 0;
+	WINBIO_REJECT_DETAIL rejectDetail = 0;
+	WINBIO_BIOMETRIC_SUBTYPE subFactor = WINBIO_SUBTYPE_NO_INFORMATION;
+
+	// Find the identity of the user.
+	hr = GetCurrentUserIdentity(&identity);
+	if (FAILED(hr))
+	{
+		wprintf_s(L"\n User identity not found. hr = 0x%x\n", hr);
+		goto e_Exit;
+	}
+
+	// Connect to the system pool. 
+	hr = WinBioOpenSession(
+		WINBIO_TYPE_FINGERPRINT,    // Service provider
+		WINBIO_POOL_SYSTEM,         // Pool type
+		WINBIO_FLAG_DEFAULT,        // Configuration and access
+		NULL,                       // Array of biometric unit IDs
+		0,                          // Count of biometric unit IDs
+		NULL,                       // Database ID
+		&sessionHandle              // [out] Session handle
+	);
+	if (FAILED(hr))
+	{
+		wprintf_s(L"\n WinBioOpenSession failed. hr = 0x%x\n", hr);
+		goto e_Exit;
+	}
+
+	EnumerateSensors(&unitId, false);
+
+	// Locate the biometric sensor and retrieve a WINBIO_IDENTITY object.
+//	wprintf_s(L"\n Calling WinBioIdentify - Swipe finger on sensor...\n");
+//	hr = WinBioIdentify(
+//		sessionHandle,              // Session handle
+//		&unitId,                    // Biometric unit ID
+//		&identity,                  // User SID
+//		&subFactor,                 // Finger sub factor
+//		&rejectDetail               // Rejection information
+//	);
+//	wprintf_s(L"\n Swipe processed - Unit ID: %d\n", unitId);
+//	if (FAILED(hr))
+//	{
+//		if (hr == WINBIO_E_UNKNOWN_ID)
+//		{
+//			wprintf_s(L"\n Unknown identity.\n");
+//		}
+//		else if (hr == WINBIO_E_BAD_CAPTURE)
+//		{
+//			wprintf_s(L"\n Bad capture; reason: %d. (%s)\n", rejectDetail, ConvertRejectDetailToString(rejectDetail));
+//		}
+//		else
+//		{
+//			wprintf_s(L"\n WinBioEnumBiometricUnits failed. hr = 0x%x\n", hr);
+//		}
+//		goto e_Exit;
+//	}
+//	else
+//	{
+//		wprintf_s(L"Biometric unit ID = 0x%x\n", unitId);
+		//wprintf_s(L"User SID = %08x-%04x-%04x-%08x\n", identity.Value.TemplateGuid.Data1, identity.Value.TemplateGuid.Data2, identity.Value.TemplateGuid.Data3, identity.Value.TemplateGuid.Data4);
+//		wprintf_s(L"User SID = %08X-%04X-%04X-%02X%02X-%02X%02X%02X%02X%02X%02X\n",
+//			identity.Value.TemplateGuid.Data1,
+//			identity.Value.TemplateGuid.Data2,
+//			identity.Value.TemplateGuid.Data3,
+//			identity.Value.TemplateGuid.Data4[0],
+//			identity.Value.TemplateGuid.Data4[1],
+//			identity.Value.TemplateGuid.Data4[2],
+//			identity.Value.TemplateGuid.Data4[3],
+//			identity.Value.TemplateGuid.Data4[4],
+//			identity.Value.TemplateGuid.Data4[5],
+//			identity.Value.TemplateGuid.Data4[6],
+//			identity.Value.TemplateGuid.Data4[7]);
+//		wprintf_s(L"Finger sub factor = 0x%x. (%s)\n", subFactor, ConvertSubFactorToString(subFactor));
+//	}
+
+	// Retrieve the biometric sub-factors for the template.
+	hr = WinBioEnumEnrollments(
+		sessionHandle,              // Session handle
+		unitId,                     // Biometric unit ID
+		&identity,                  // Template ID
+		&subFactorArray,            // Subfactors
+		&subFactorCount             // Count of subfactors
+	);
+	if (FAILED(hr))
+	{
+		wprintf_s(L"\n WinBioEnumEnrollments failed. hr = 0x%x\n", hr);
+		if (hr == WINBIO_E_UNKNOWN_ID)
+		{
+			wprintf_s(L"\n Unknown identity.\n The biometric sample doesn't match any known identify.\n");
+		}
+		else if (hr == E_INVALIDARG) 
+		{
+			wprintf_s(L"\n The UnitId parameter cannot be zero.\n");
+		}
+		goto e_Exit;
+	}
+
+	// Print the sub-factor(s) to the console.
+	wprintf_s(L"\n Enrollments for this user on Unit ID: %d", unitId);
+	wprintf_s(L"\n Enrollments subFactorCount: %d\n", subFactorCount);
+	*_subFactorCount = subFactorCount;
+
+	for (SIZE_T index = 0; index < subFactorCount; ++index)
+	{
+		SubFactor = subFactorArray[index];
+		_subFactorArray[index] = SubFactor;
+		wprintf_s(L"SubFactor %d:", SubFactor);
+
+		switch (SubFactor)
+		{
+			case WINBIO_ANSI_381_POS_RH_THUMB:
+				wprintf_s(L"\n   RH thumb\n");
+				break;
+			case WINBIO_ANSI_381_POS_RH_INDEX_FINGER:
+				wprintf_s(L"\n   RH index finger\n");
+				break;
+			case WINBIO_ANSI_381_POS_RH_MIDDLE_FINGER:
+				wprintf_s(L"\n   RH middle finger\n");
+				break;
+			case WINBIO_ANSI_381_POS_RH_RING_FINGER:
+				wprintf_s(L"\n   RH ring finger\n");
+				break;
+			case WINBIO_ANSI_381_POS_RH_LITTLE_FINGER:
+				wprintf_s(L"\n   RH little finger\n");
+				break;
+			case WINBIO_ANSI_381_POS_LH_THUMB:
+				wprintf_s(L"\n   LH thumb\n");
+				break;
+			case WINBIO_ANSI_381_POS_LH_INDEX_FINGER:
+				wprintf_s(L"\n   LH index finger\n");
+				break;
+			case WINBIO_ANSI_381_POS_LH_MIDDLE_FINGER:
+				wprintf_s(L"\n   LH middle finger\n");
+				break;
+			case WINBIO_ANSI_381_POS_LH_RING_FINGER:
+				wprintf_s(L"\n   LH ring finger\n");
+				break;
+			case WINBIO_ANSI_381_POS_LH_LITTLE_FINGER:
+				wprintf_s(L"\n   LH little finger\n");
+				break;
+			default:
+				wprintf_s(L"\n   The sub-factor is not correct\n");
+				break;
+		}
+	}
+
+e_Exit:
+	if (subFactorArray != NULL)
+	{
+		WinBioFree(subFactorArray);
+		subFactorArray = NULL;
+	}
+
+	if (sessionHandle != NULL)
+	{
+		WinBioCloseSession(sessionHandle);
+		sessionHandle = NULL;
+	}
+
+	//wprintf_s(L"\n Press any key to exit...");
+	//_getch();
+	return hr;
+}
+
 int main(char *argv[], int argc)
 {
 	char ch;
+	int nSelect;
 	int verifyCounter = 0;
-	HRESULT hr;
+	HRESULT hr = S_OK;
 	WINBIO_BIOMETRIC_SUBTYPE subFactor;
+	WINBIO_BIOMETRIC_SUBTYPE g_subFactorArray[10] = { 0 };
+	SIZE_T g_subFactorCount = 0;
+
+	setlocale(LC_ALL, "chinese-traditional");
 
 	wprintf_s(L" Please Enter The Item:\n");
 	wprintf_s(L" Item : Function\n");
@@ -1468,21 +2491,53 @@ int main(char *argv[], int argc)
 	wprintf_s(L"   h -> EnumDatabases\n");
 	wprintf_s(L"   i -> EnumSvcProviders\n");
 	wprintf_s(L"   j -> DeleteTemplate\n");
+	wprintf_s(L"   k -> EnumEnrollments(2)\n");
 
-	scanf("%c", &ch);
+	scanf(" %c", &ch);
+	//ch = getchar();
 	switch (ch)
 	{
 		//Enroll
 		case 'a':
-			subFactor = WINBIO_ANSI_381_POS_RH_THUMB;
-			EnrollSysPool(FALSE, subFactor);
+			wprintf_s(L" Enter Enroll Finger:\n");
+			wprintf_s(L"  WINBIO_ANSI_381_POS_RH_THUMB        	1\n");
+			wprintf_s(L"  WINBIO_ANSI_381_POS_RH_INDEX_FINGER 	2\n");
+			wprintf_s(L"  WINBIO_ANSI_381_POS_RH_MIDDLE_FINGER	3\n");
+			wprintf_s(L"  WINBIO_ANSI_381_POS_RH_RING_FINGER  	4\n");
+			wprintf_s(L"  WINBIO_ANSI_381_POS_RH_LITTLE_FINGER	5\n");
+			wprintf_s(L"  WINBIO_ANSI_381_POS_LH_THUMB        	6\n");
+			wprintf_s(L"  WWINBIO_ANSI_381_POS_LH_INDEX_FINGER 	7\n");
+			wprintf_s(L"  WINBIO_ANSI_381_POS_LH_MIDDLE_FINGER	8\n");
+			wprintf_s(L"  WINBIO_ANSI_381_POS_LH_RING_FINGER  	9\n");
+			wprintf_s(L"  WINBIO_ANSI_381_POS_LH_LITTLE_FINGER	10\n");
+			std::cin >> nSelect;
+			subFactor = (WINBIO_BIOMETRIC_SUBTYPE) nSelect;
+			//subFactor = WINBIO_ANSI_381_POS_RH_THUMB;
+			//EnrollSysPool(FALSE, subFactor);
+			//hr = EnrollSysPoolWithCallback(FALSE, FALSE, WINBIO_ANSI_381_POS_RH_INDEX_FINGER);
+			hr = EnrollSysPoolWithCallback(FALSE, FALSE, subFactor);
 			break;
 
 		//Verify
 		case 'b':
+			wprintf_s(L" Enter Verify Finger:\n");
+			wprintf_s(L"  WINBIO_ANSI_381_POS_RH_THUMB        	1\n");
+			wprintf_s(L"  WINBIO_ANSI_381_POS_RH_INDEX_FINGER 	2\n");
+			wprintf_s(L"  WINBIO_ANSI_381_POS_RH_MIDDLE_FINGER	3\n");
+			wprintf_s(L"  WINBIO_ANSI_381_POS_RH_RING_FINGER  	4\n");
+			wprintf_s(L"  WINBIO_ANSI_381_POS_RH_LITTLE_FINGER	5\n");
+			wprintf_s(L"  WINBIO_ANSI_381_POS_LH_THUMB        	6\n");
+			wprintf_s(L"  WWINBIO_ANSI_381_POS_LH_INDEX_FINGER 	7\n");
+			wprintf_s(L"  WINBIO_ANSI_381_POS_LH_MIDDLE_FINGER	8\n");
+			wprintf_s(L"  WINBIO_ANSI_381_POS_LH_RING_FINGER  	9\n");
+			wprintf_s(L"  WINBIO_ANSI_381_POS_LH_LITTLE_FINGER	10\n");
+			std::cin >> nSelect;
+			
 VerifyAgain:
-			subFactor = WINBIO_ANSI_381_POS_RH_THUMB;
+			//subFactor = WINBIO_ANSI_381_POS_RH_THUMB;
+			subFactor = (WINBIO_BIOMETRIC_SUBTYPE) nSelect;
 			hr = Verify(subFactor);
+			//hr = VerifyWithCallback(FALSE, subFactor);
 			if (hr == WINBIO_E_BAD_CAPTURE) 
 			{
 				verifyCounter++;
@@ -1495,11 +2550,13 @@ VerifyAgain:
 		//Identify
 		case 'c':
 			Identify();
+			//hr = IdentifyWithCallback(FALSE)
 			break;
 
 		//CaptureSample
 		case 'd':
 			CaptureSample();
+			//hr = CaptureSampleWithCallback(FALSE);
 			break;
 
 		case 'e':
@@ -1508,6 +2565,7 @@ VerifyAgain:
 
 		case 'f':
 			LocateSensor();
+			//hr = LocateSensorWithCallback(FALSE);
 			break;
 
 		case 'g':
@@ -1526,34 +2584,51 @@ VerifyAgain:
 			DeleteTemplate();
 			break;
 
+		case 'k':
+			EnumEnrollments(g_subFactorArray, &g_subFactorCount);
+			wprintf_s(L" g_subFactorCount = %d\n", g_subFactorCount);
+			for (SIZE_T index = 0; index < g_subFactorCount; ++index)
+				wprintf_s(L" g_subFactorArray[%d] = %d\n", index, g_subFactorArray[index]);
+			break;
+
 		default:
 			wprintf_s(L"Please Check Your Enter\n");
+			wprintf_s(L"\n");
 			break;
 	}
+	
+	//GetCredentialState();
 
 	//WinbioAsyncLocateSensor();
 
 	//EnumerateSensors();
+	
 	//LocateSensor();
+	//LocateSensorWithCallback(FALSE);
+	
 	//EnumEnrollments();
 
 	//Enroll
 	//WINBIO_BIOMETRIC_SUBTYPE subFactor = 0x02;
 	//EnrollSysPool(FALSE, subFactor);
+	//EnrollSysPoolWithCallback(FALSE, FALSE, WINBIO_ANSI_381_POS_RH_INDEX_FINGER);
 	
 	//Identify
 	//Identify();
+	//IdentifyWithCallback(FALSE);
 	
 	//Verify
 	//WINBIO_BIOMETRIC_SUBTYPE subFactor = 0x01;
 	//Verify(subFactor);
+	//VerifyWithCallback(FALSE, subFactor);
 
 	//CaptureSample();
+	//CaptureSampleWithCallback(FALSE);
 
 	//EnumDatabases();
 	//EnumSvcProviders();
 
 	//RemoveCredential();
-	//system("pause");
+	system("pause");
 	return 0;
 }
