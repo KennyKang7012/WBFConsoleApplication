@@ -2476,125 +2476,135 @@ int main(char *argv[], int argc)
 	WINBIO_BIOMETRIC_SUBTYPE subFactor;
 	WINBIO_BIOMETRIC_SUBTYPE g_subFactorArray[10] = { 0 };
 	SIZE_T g_subFactorCount = 0;
+	BOOL g_bLoop = TRUE;
 
 	setlocale(LC_ALL, "chinese-traditional");
 
-	wprintf_s(L" Please Enter The Item:\n");
-	wprintf_s(L" Item : Function\n");
-	wprintf_s(L"   a -> Enroll\n");
-	wprintf_s(L"   b -> Verify\n");
-	wprintf_s(L"   c -> Identify\n");
-	wprintf_s(L"   d -> CaptureSample\n");
-	wprintf_s(L"   e -> EnumerateSensors\n");
-	wprintf_s(L"   f -> LocateSensor\n");
-	wprintf_s(L"   g -> EnumEnrollments\n");
-	wprintf_s(L"   h -> EnumDatabases\n");
-	wprintf_s(L"   i -> EnumSvcProviders\n");
-	wprintf_s(L"   j -> DeleteTemplate\n");
-	wprintf_s(L"   k -> EnumEnrollments(2)\n");
-
-	scanf(" %c", &ch);
-	//ch = getchar();
-	switch (ch)
+	while (g_bLoop)
 	{
-		//Enroll
-		case 'a':
-			wprintf_s(L" Enter Enroll Finger:\n");
-			wprintf_s(L"  WINBIO_ANSI_381_POS_RH_THUMB        	1\n");
-			wprintf_s(L"  WINBIO_ANSI_381_POS_RH_INDEX_FINGER 	2\n");
-			wprintf_s(L"  WINBIO_ANSI_381_POS_RH_MIDDLE_FINGER	3\n");
-			wprintf_s(L"  WINBIO_ANSI_381_POS_RH_RING_FINGER  	4\n");
-			wprintf_s(L"  WINBIO_ANSI_381_POS_RH_LITTLE_FINGER	5\n");
-			wprintf_s(L"  WINBIO_ANSI_381_POS_LH_THUMB        	6\n");
-			wprintf_s(L"  WWINBIO_ANSI_381_POS_LH_INDEX_FINGER 	7\n");
-			wprintf_s(L"  WINBIO_ANSI_381_POS_LH_MIDDLE_FINGER	8\n");
-			wprintf_s(L"  WINBIO_ANSI_381_POS_LH_RING_FINGER  	9\n");
-			wprintf_s(L"  WINBIO_ANSI_381_POS_LH_LITTLE_FINGER	10\n");
-			std::cin >> nSelect;
-			subFactor = (WINBIO_BIOMETRIC_SUBTYPE) nSelect;
-			//subFactor = WINBIO_ANSI_381_POS_RH_THUMB;
-			//EnrollSysPool(FALSE, subFactor);
-			//hr = EnrollSysPoolWithCallback(FALSE, FALSE, WINBIO_ANSI_381_POS_RH_INDEX_FINGER);
-			hr = EnrollSysPoolWithCallback(FALSE, FALSE, subFactor);
-			break;
+		wprintf_s(L" Please Enter The Item:\n");
+		wprintf_s(L" Item : Function\n");
+		wprintf_s(L"   a -> Enroll\n");
+		wprintf_s(L"   b -> Verify\n");
+		wprintf_s(L"   c -> Identify\n");
+		wprintf_s(L"   d -> CaptureSample\n");
+		wprintf_s(L"   e -> EnumerateSensors\n");
+		wprintf_s(L"   f -> LocateSensor\n");
+		wprintf_s(L"   g -> EnumEnrollments\n");
+		wprintf_s(L"   h -> EnumDatabases\n");
+		wprintf_s(L"   i -> EnumSvcProviders\n");
+		wprintf_s(L"   j -> DeleteTemplate\n");
+		wprintf_s(L"   k -> EnumEnrollments(2)\n");
+		wprintf_s(L"   q -> Quit\n");
 
-		//Verify
-		case 'b':
-			wprintf_s(L" Enter Verify Finger:\n");
-			wprintf_s(L"  WINBIO_ANSI_381_POS_RH_THUMB        	1\n");
-			wprintf_s(L"  WINBIO_ANSI_381_POS_RH_INDEX_FINGER 	2\n");
-			wprintf_s(L"  WINBIO_ANSI_381_POS_RH_MIDDLE_FINGER	3\n");
-			wprintf_s(L"  WINBIO_ANSI_381_POS_RH_RING_FINGER  	4\n");
-			wprintf_s(L"  WINBIO_ANSI_381_POS_RH_LITTLE_FINGER	5\n");
-			wprintf_s(L"  WINBIO_ANSI_381_POS_LH_THUMB        	6\n");
-			wprintf_s(L"  WWINBIO_ANSI_381_POS_LH_INDEX_FINGER 	7\n");
-			wprintf_s(L"  WINBIO_ANSI_381_POS_LH_MIDDLE_FINGER	8\n");
-			wprintf_s(L"  WINBIO_ANSI_381_POS_LH_RING_FINGER  	9\n");
-			wprintf_s(L"  WINBIO_ANSI_381_POS_LH_LITTLE_FINGER	10\n");
-			std::cin >> nSelect;
-			
+		scanf(" %c", &ch);
+		//ch = getchar();
+		switch (ch)
+		{
+			//Enroll
+			case 'a':
+				wprintf_s(L" Enter Enroll Finger:\n");
+				wprintf_s(L"  WINBIO_ANSI_381_POS_RH_THUMB        	1\n");
+				wprintf_s(L"  WINBIO_ANSI_381_POS_RH_INDEX_FINGER 	2\n");
+				wprintf_s(L"  WINBIO_ANSI_381_POS_RH_MIDDLE_FINGER	3\n");
+				wprintf_s(L"  WINBIO_ANSI_381_POS_RH_RING_FINGER  	4\n");
+				wprintf_s(L"  WINBIO_ANSI_381_POS_RH_LITTLE_FINGER	5\n");
+				wprintf_s(L"  WINBIO_ANSI_381_POS_LH_THUMB        	6\n");
+				wprintf_s(L"  WWINBIO_ANSI_381_POS_LH_INDEX_FINGER 	7\n");
+				wprintf_s(L"  WINBIO_ANSI_381_POS_LH_MIDDLE_FINGER	8\n");
+				wprintf_s(L"  WINBIO_ANSI_381_POS_LH_RING_FINGER  	9\n");
+				wprintf_s(L"  WINBIO_ANSI_381_POS_LH_LITTLE_FINGER	10\n");
+				std::cin >> nSelect;
+				subFactor = (WINBIO_BIOMETRIC_SUBTYPE)nSelect;
+				//subFactor = WINBIO_ANSI_381_POS_RH_THUMB;
+				//EnrollSysPool(FALSE, subFactor);
+				//hr = EnrollSysPoolWithCallback(FALSE, FALSE, WINBIO_ANSI_381_POS_RH_INDEX_FINGER);
+				hr = EnrollSysPoolWithCallback(FALSE, FALSE, subFactor);
+				break;
+
+				//Verify
+			case 'b':
+				wprintf_s(L" Enter Verify Finger:\n");
+				wprintf_s(L"  WINBIO_ANSI_381_POS_RH_THUMB        	1\n");
+				wprintf_s(L"  WINBIO_ANSI_381_POS_RH_INDEX_FINGER 	2\n");
+				wprintf_s(L"  WINBIO_ANSI_381_POS_RH_MIDDLE_FINGER	3\n");
+				wprintf_s(L"  WINBIO_ANSI_381_POS_RH_RING_FINGER  	4\n");
+				wprintf_s(L"  WINBIO_ANSI_381_POS_RH_LITTLE_FINGER	5\n");
+				wprintf_s(L"  WINBIO_ANSI_381_POS_LH_THUMB        	6\n");
+				wprintf_s(L"  WWINBIO_ANSI_381_POS_LH_INDEX_FINGER 	7\n");
+				wprintf_s(L"  WINBIO_ANSI_381_POS_LH_MIDDLE_FINGER	8\n");
+				wprintf_s(L"  WINBIO_ANSI_381_POS_LH_RING_FINGER  	9\n");
+				wprintf_s(L"  WINBIO_ANSI_381_POS_LH_LITTLE_FINGER	10\n");
+				std::cin >> nSelect;
+
 VerifyAgain:
-			//subFactor = WINBIO_ANSI_381_POS_RH_THUMB;
-			subFactor = (WINBIO_BIOMETRIC_SUBTYPE) nSelect;
-			hr = Verify(subFactor);
-			//hr = VerifyWithCallback(FALSE, subFactor);
-			if (hr == WINBIO_E_BAD_CAPTURE) 
-			{
-				verifyCounter++;
-				if (verifyCounter == 3)
-					break;
-				goto VerifyAgain;
-			}
-			break;
+				//subFactor = WINBIO_ANSI_381_POS_RH_THUMB;
+				subFactor = (WINBIO_BIOMETRIC_SUBTYPE)nSelect;
+				hr = Verify(subFactor);
+				//hr = VerifyWithCallback(FALSE, subFactor);
+				if (hr == WINBIO_E_BAD_CAPTURE)
+				{
+					verifyCounter++;
+					if (verifyCounter == 3)
+						break;
+					goto VerifyAgain;
+				}
+				break;
 
-		//Identify
-		case 'c':
-			Identify();
-			//hr = IdentifyWithCallback(FALSE)
-			break;
+				//Identify
+			case 'c':
+				Identify();
+				//hr = IdentifyWithCallback(FALSE)
+				break;
 
-		//CaptureSample
-		case 'd':
-			CaptureSample();
-			//hr = CaptureSampleWithCallback(FALSE);
-			break;
+				//CaptureSample
+			case 'd':
+				CaptureSample();
+				//hr = CaptureSampleWithCallback(FALSE);
+				break;
 
-		case 'e':
-			EnumerateSensors();
-			break;
+			case 'e':
+				EnumerateSensors();
+				break;
 
-		case 'f':
-			LocateSensor();
-			//hr = LocateSensorWithCallback(FALSE);
-			break;
+			case 'f':
+				LocateSensor();
+				//hr = LocateSensorWithCallback(FALSE);
+				break;
 
-		case 'g':
-			EnumEnrollments();
-			break;
+			case 'g':
+				EnumEnrollments();
+				break;
 
-		case 'h':
-			EnumDatabases();
-			break;
+			case 'h':
+				EnumDatabases();
+				break;
 
-		case 'i':
-			EnumSvcProviders();
-			break;
+			case 'i':
+				EnumSvcProviders();
+				break;
 
-		case 'j':
-			DeleteTemplate();
-			break;
+			case 'j':
+				DeleteTemplate();
+				break;
 
-		case 'k':
-			EnumEnrollments(g_subFactorArray, &g_subFactorCount);
-			wprintf_s(L" g_subFactorCount = %d\n", g_subFactorCount);
-			for (SIZE_T index = 0; index < g_subFactorCount; ++index)
-				wprintf_s(L" g_subFactorArray[%d] = %d\n", index, g_subFactorArray[index]);
-			break;
+			case 'k':
+				EnumEnrollments(g_subFactorArray, &g_subFactorCount);
+				wprintf_s(L" g_subFactorCount = %d\n", g_subFactorCount);
+				for (SIZE_T index = 0; index < g_subFactorCount; ++index)
+					wprintf_s(L" g_subFactorArray[%d] = %d\n", index, g_subFactorArray[index]);
+				break;
 
-		default:
-			wprintf_s(L"Please Check Your Enter\n");
-			wprintf_s(L"\n");
-			break;
+			case 'q':
+				wprintf_s(L"Bye ~~\n");
+				g_bLoop = FALSE;
+				break;
+
+			default:
+				wprintf_s(L"Type Error!!! Please Check Your Enter ~~\n");
+				wprintf_s(L"\n");
+				break;
+		}
 	}
 	
 	//GetCredentialState();
